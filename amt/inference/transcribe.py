@@ -1000,9 +1000,9 @@ def batch_transcribe(
         model.decoder = quantize_int8(model.decoder)
 
     file_queue = Queue()
-    sorted(
-        files_to_process, key=lambda x: os.path.getsize(x["path"]), reverse=True
-    )
+    # sorted(
+    #     files_to_process, key=lambda x: os.path.getsize(x["path"]), reverse=True
+    # )
     for file_to_process in files_to_process:
         if "segments" in file_to_process:
             # Process files with segments
