@@ -312,7 +312,7 @@ def gpu_manager(
     gpu_batch_queue: Queue,
     gpu_waiting_dict: dict,
     gpu_waiting_dict_lock: LockType,
-    result_queue: Queue,
+    results_dict: dict,
     model: AmtEncoderDecoder,
     batch_size: int,
     compile_mode: str | bool = False,
@@ -377,7 +377,7 @@ def gpu_manager(
                     # pid = -1 when its a pad sequence
                     for result, (_, pid) in zip(results, batch):
                         if pid != -1:
-                            result_queue.put((result, pid))
+                            results_dict[pid] = result
 
     except Exception as e:
         logger.error(f"GPU manager failed with exception: {e}")
@@ -437,7 +437,7 @@ def gpu_batch_manager(
         while True:
             try:
                 while not gpu_task_queue.empty():
-                    task, pid = gpu_task_queue.get_nowait()
+                    task, pid = gpu_task_queue.get(timeout=0.05)
                     tasks.append((task, pid))
             except Empty:
                 pass
@@ -681,7 +681,7 @@ def _get_silent_intervals(wav: torch.Tensor):
 def transcribe_file(
     file_path,
     gpu_task_queue: Queue,
-    result_queue: Queue,
+    results_dict: Queue,
     pid: int,
     tokenizer: AmtTokenizer = AmtTokenizer(),
     segment: Tuple[int, int] | None = None,
@@ -706,15 +706,12 @@ def transcribe_file(
         gpu_task_queue.put(((curr_audio_segment, seq), pid))
         while True:
             try:
-                gpu_result = result_queue.get(timeout=0.01)
+                seq = results_dict.get(pid)
             except Exception as e:
+                time.sleep(0.05)
                 pass
             else:
-                if gpu_result[1] == pid:
-                    seq = gpu_result[0]
-                    break
-                else:
-                    result_queue.put(gpu_result)
+                break
 
         if len(silent_intervals) > 0:
             logger.debug(
@@ -807,7 +804,7 @@ def process_file(
     file_path: str,
     file_queue: Queue,
     gpu_task_queue: Queue,
-    result_queue: Queue,
+    results_dict: dict,
     tokenizer: AmtTokenizer,
     save_dir: str,
     input_dir: str,
@@ -871,7 +868,7 @@ def process_file(
             seq = transcribe_file(
                 file_path,
                 gpu_task_queue,
-                result_queue,
+                results_dict,
                 pid=pid,
                 segment=segment,
             )
@@ -880,9 +877,8 @@ def process_file(
                 f"Failed to process {file_path} segment {idx}: {traceback.format_exc()}"
             )
             task_rmv_cnt = remove_failures_from_queue_(gpu_task_queue, pid)
-            res_rmv_cnt = remove_failures_from_queue_(result_queue, pid)
+            results_dict.pop(pid)
             logger.info(f"Removed {task_rmv_cnt} from task queue")
-            logger.info(f"Removed {res_rmv_cnt} from result queue")
             continue
 
         logger.info(
@@ -925,7 +921,7 @@ def watchdog(main_pids: List, child_pids: List):
 def worker(
     file_queue: Queue,
     gpu_task_queue: Queue,
-    result_queue: Queue,
+    results_dict: dict,
     save_dir: str,
     input_dir: str | None = None,
     tasks_per_worker: int = 5,
@@ -971,7 +967,7 @@ def worker(
                         file_path=temp_path,
                         file_queue=file_queue,
                         gpu_task_queue=gpu_task_queue,
-                        result_queue=result_queue,
+                        results_dict=results_dict,
                         tokenizer=tokenizer,
                         save_dir=save_dir,
                         input_dir=temp_dir,
@@ -1083,7 +1079,7 @@ def batch_transcribe(
     gpu_waiting_dict_lock = mp_manager.Lock()
     gpu_batch_queue = Queue()
     gpu_task_queue = Queue()
-    result_queue = Queue()
+    results_dict = mp_manager.dict()
 
     child_pids = []
     logger.info(
@@ -1095,7 +1091,7 @@ def batch_transcribe(
             args=(
                 file_queue,
                 gpu_task_queue,
-                result_queue,
+                results_dict,
                 save_dir,
                 input_dir,
                 num_processes_per_worker,
@@ -1132,7 +1128,7 @@ def batch_transcribe(
                     gpu_batch_queue,
                     gpu_waiting_dict,
                     gpu_waiting_dict_lock,
-                    result_queue,
+                    results_dict,
                     model,
                     batch_size,
                     compile_mode,
@@ -1164,7 +1160,7 @@ def batch_transcribe(
                 gpu_batch_queue,
                 gpu_waiting_dict,
                 gpu_waiting_dict_lock,
-                result_queue,
+                results_dict,
                 model,
                 batch_size,
                 compile_mode,
@@ -1212,8 +1208,8 @@ def batch_transcribe(
         gpu_task_queue.join_thread()
         gpu_batch_queue.close()
         gpu_batch_queue.join_thread()
-        result_queue.close()
-        result_queue.join_thread()
+        results_dict.close()
+        results_dict.join_thread()
 
     time_taken_s = int(time.time() - start_time)
     logger.info(
