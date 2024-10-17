@@ -982,7 +982,7 @@ def worker(
                     logger.error(
                         f"Error processing file {file_to_process['path']}: {e}"
                     )
-                    time.sleep(2)
+                    time.sleep(10)
                     continue
 
             if file_queue.empty():
