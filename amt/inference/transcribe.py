@@ -706,7 +706,7 @@ def transcribe_file(
         gpu_task_queue.put(((curr_audio_segment, seq), pid))
         while True:
             try:
-                seq = results_dict.get(pid)
+                seq = results_dict[pid]
             except Exception as e:
                 time.sleep(0.05)
                 pass
