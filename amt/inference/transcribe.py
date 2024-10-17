@@ -1076,7 +1076,7 @@ def batch_transcribe(
             file_queue.qsize(),
         )
     num_processes_per_worker = min(
-        max(1, 5 * (batch_size // num_workers)),
+        max(1, 5 * (batch_size // num_workers) * num_gpus),
         file_queue.qsize() // num_workers,
     )
 
