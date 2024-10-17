@@ -999,7 +999,6 @@ def worker(
         logger.error(f"File worker failed with exception: {e}")
     finally:
         logger.info("File worker terminated")
-        ssh.close()
 
 
 def batch_transcribe(
