@@ -932,7 +932,6 @@ def worker(
 ):
     logger = _setup_logger(name="F")
     tokenizer = AmtTokenizer()
-    ssh = Connection("korea")
 
     def process_file_wrapper():
         while True:
@@ -955,15 +954,17 @@ def worker(
                     )
                     temp_path = os.path.join(temp_dir, original_filename)
 
-                    # Copy the remote file to local temporary file
-                    with ssh.sftp().open(
-                        file_to_process["path"], "rb"
-                    ) as remote_file:
+                    with (
+                        Connection("korea") as ssh,
+                        ssh.sftp().open(
+                            file_to_process["path"], "rb"
+                        ) as remote_file,
+                        open(temp_path, "wb") as local_file,
+                    ):
                         logger.info(
                             f"Copying file from {file_to_process['path']} to {temp_path}"
                         )
-                        with open(temp_path, "wb") as local_file:
-                            shutil.copyfileobj(remote_file, local_file)
+                        shutil.copyfileobj(remote_file, local_file)
 
                     # Process the local temporary file
                     process_file(
