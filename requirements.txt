@@ -8,3 +8,4 @@ mido
 tqdm
 orjson
 mir_eval
+fabric
