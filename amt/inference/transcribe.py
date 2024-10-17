@@ -977,14 +977,15 @@ def worker(
                         logger=logger,
                         segments=file_to_process.get("segments", None),
                     )
-
                 except Exception as e:
                     logger.error(
                         f"Error processing file {file_to_process['path']}: {e}"
                     )
+                    continue
 
             if file_queue.empty():
-                return
+                logger.info("File queue empty after processing")
+                break
 
     try:
         with ThreadPoolExecutor(max_workers=tasks_per_worker) as executor:
