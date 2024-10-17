@@ -982,6 +982,7 @@ def worker(
                     logger.error(
                         f"Error processing file {file_to_process['path']}: {e}"
                     )
+                    time.sleep(2)
                     continue
 
             if file_queue.empty():
@@ -1110,7 +1111,7 @@ def batch_transcribe(
         p.start()
         child_pids.append(p.pid)
 
-    time.sleep(60)
+    time.sleep(30)
 
     gpu_batch_manager_process = multiprocessing.Process(
         target=gpu_batch_manager,
