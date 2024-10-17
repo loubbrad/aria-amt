@@ -13,6 +13,8 @@ import torch.multiprocessing as torch_multiprocessing
 import torch._dynamo.config
 import torch._inductor.config
 import numpy as np
+import shutil
+import tempfile
 
 from multiprocessing import Queue, Manager
 from multiprocessing.synchronize import Lock as LockType
@@ -24,6 +26,7 @@ from tqdm import tqdm
 from functools import wraps
 from torch.cuda import is_bf16_supported
 from librosa.effects import _signal_to_frame_nonsilent
+from fabric import Connection
 
 from amt.inference.model import AmtEncoderDecoder
 from amt.tokenizer import AmtTokenizer
@@ -349,7 +352,7 @@ def gpu_manager(
             try:
                 with gpu_waiting_dict_lock:
                     gpu_waiting_dict[gpu_id] = time.time()
-                batch = gpu_batch_queue.get(timeout=60)
+                batch = gpu_batch_queue.get(timeout=180)
                 with gpu_waiting_dict_lock:
                     del gpu_waiting_dict[gpu_id]
             except Empty as e:
@@ -827,6 +830,7 @@ def process_file(
             )
             mid_dict.remove_redundant_pedals()
             mid = mid_dict.to_midi()
+            print(f"Saving to {_save_path}")
             mid.save(_save_path)
         except Exception as e:
             logger.error(f"Failed to save {_save_path}")
@@ -928,6 +932,7 @@ def worker(
 ):
     logger = _setup_logger(name="F")
     tokenizer = AmtTokenizer()
+    ssh = Connection("korea")
 
     def process_file_wrapper():
         while True:
@@ -938,21 +943,45 @@ def worker(
                     logger.info("File queue empty")
                     break
                 else:
-                    # I'm pretty sure empty is thrown due to timeout too
                     logger.info("Processes timed out waiting for file queue")
                     continue
 
-            process_file(
-                file_path=file_to_process["path"],
-                file_queue=file_queue,
-                gpu_task_queue=gpu_task_queue,
-                result_queue=result_queue,
-                tokenizer=tokenizer,
-                save_dir=save_dir,
-                input_dir=input_dir,
-                logger=logger,
-                segments=file_to_process.get("segments", None),
-            )
+            # Create a temporary directory for this file
+            with tempfile.TemporaryDirectory() as temp_dir:
+                try:
+                    # Generate a temporary filename while preserving the extension
+                    original_filename = os.path.basename(
+                        file_to_process["path"]
+                    )
+                    temp_path = os.path.join(temp_dir, original_filename)
+
+                    # Copy the remote file to local temporary file
+                    with ssh.sftp().open(
+                        file_to_process["path"], "rb"
+                    ) as remote_file:
+                        logger.info(
+                            f"Copying file from {file_to_process["path"]} to {temp_path}"
+                        )
+                        with open(temp_path, "wb") as local_file:
+                            shutil.copyfileobj(remote_file, local_file)
+
+                    # Process the local temporary file
+                    process_file(
+                        file_path=temp_path,
+                        file_queue=file_queue,
+                        gpu_task_queue=gpu_task_queue,
+                        result_queue=result_queue,
+                        tokenizer=tokenizer,
+                        save_dir=save_dir,
+                        input_dir=temp_dir,
+                        logger=logger,
+                        segments=file_to_process.get("segments", None),
+                    )
+
+                except Exception as e:
+                    logger.error(
+                        f"Error processing file {file_to_process['path']}: {e}"
+                    )
 
             if file_queue.empty():
                 return
@@ -968,6 +997,7 @@ def worker(
         logger.error(f"File worker failed with exception: {e}")
     finally:
         logger.info("File worker terminated")
+        ssh.close()
 
 
 def batch_transcribe(
@@ -1045,7 +1075,8 @@ def batch_transcribe(
             file_queue.qsize(),
         )
     num_processes_per_worker = min(
-        5 * (batch_size // num_workers), file_queue.qsize() // num_workers
+        max(1, 5 * (batch_size // num_workers)),
+        file_queue.qsize() // num_workers,
     )
 
     mp_manager = Manager()
@@ -1077,6 +1108,8 @@ def batch_transcribe(
     for p in worker_processes:
         p.start()
         child_pids.append(p.pid)
+
+    time.sleep(60)
 
     gpu_batch_manager_process = multiprocessing.Process(
         target=gpu_batch_manager,

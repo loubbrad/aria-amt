@@ -408,7 +408,7 @@ def transcribe(
         assert os.path.isfile(load_path), f"audio file not found: {load_path}"
         trans_mode = "single"
     if load_dir:
-        assert os.path.isdir(load_dir), "load directory doesn't exist"
+        # assert os.path.isdir(load_dir), "load directory doesn't exist"
         if maestro is True:
             trans_mode = "maestro"
         else:
