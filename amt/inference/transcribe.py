@@ -424,7 +424,7 @@ def gpu_batch_manager(
     gpu_waiting_dict: dict,
     gpu_waiting_dict_lock: LockType,
     batch_size: int,
-    max_wait_time: float = 0.25,
+    max_wait_time: float = 0.5,
     min_batch_size: int = 1,
 ):
     logger = _setup_logger(name="B")
@@ -1076,10 +1076,7 @@ def batch_transcribe(
             min(batch_size, multiprocessing.cpu_count() - num_gpus),
             file_queue.qsize(),
         )
-    num_processes_per_worker = min(
-        max(1, 5 * (batch_size // num_workers) * num_gpus),
-        file_queue.qsize() // num_workers,
-    )
+    num_processes_per_worker = 5
 
     mp_manager = Manager()
     gpu_waiting_dict = mp_manager.dict()
