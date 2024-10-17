@@ -240,14 +240,14 @@ def process_segments(
         [MAX_BLOCK_LEN for _ in prefixes], dtype=torch.int
     ).cuda()
 
-    for idx in (
-        pbar := tqdm(
-            range(min_prefix_len, MAX_BLOCK_LEN - 1),
-            total=MAX_BLOCK_LEN - (min_prefix_len + 1),
-            leave=False,
-        )
-    ):
-        # for idx in range(min_prefix_len, MAX_BLOCK_LEN - 1):
+    # for idx in (
+    #     pbar := tqdm(
+    #         range(min_prefix_len, MAX_BLOCK_LEN - 1),
+    #         total=MAX_BLOCK_LEN - (min_prefix_len + 1),
+    #         leave=False,
+    #     )
+    # ):
+    for idx in range(min_prefix_len, MAX_BLOCK_LEN - 1):
         if idx == min_prefix_len:
             logits, next_tok_ids = prefill(
                 model,
@@ -670,7 +670,7 @@ def _get_silent_intervals(wav: torch.Tensor):
     # Filter intervals by minimum length
     valid = lengths > MIN_WINDOW_STEPS
     silent_intervals = [
-        (start * MS_PER_HOP, (end - 1) * MS_PER_HOP)
+        (int(start * MS_PER_HOP), int((end - 1) * MS_PER_HOP))
         for start, end, vl in zip(starts, ends, valid)
         if vl
     ]
