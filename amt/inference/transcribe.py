@@ -681,7 +681,7 @@ def _get_silent_intervals(wav: torch.Tensor):
 def transcribe_file(
     file_path,
     gpu_task_queue: Queue,
-    results_dict: Queue,
+    results_dict: dict,
     pid: int,
     tokenizer: AmtTokenizer = AmtTokenizer(),
     segment: Tuple[int, int] | None = None,
@@ -706,7 +706,7 @@ def transcribe_file(
         gpu_task_queue.put(((curr_audio_segment, seq), pid))
         while True:
             try:
-                seq = results_dict[pid]
+                seq = results_dict.pop(pid)
             except Exception as e:
                 time.sleep(0.05)
                 pass
