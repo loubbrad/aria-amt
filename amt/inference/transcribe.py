@@ -960,7 +960,7 @@ def worker(
                         file_to_process["path"], "rb"
                     ) as remote_file:
                         logger.info(
-                            f"Copying file from {file_to_process["path"]} to {temp_path}"
+                            f"Copying file from {file_to_process['path']} to {temp_path}"
                         )
                         with open(temp_path, "wb") as local_file:
                             shutil.copyfileobj(remote_file, local_file)
