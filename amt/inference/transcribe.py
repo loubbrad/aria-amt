@@ -708,7 +708,7 @@ def transcribe_file(
             try:
                 seq = results_dict.pop(pid)
             except Exception as e:
-                time.sleep(0.05)
+                time.sleep(0.3)
                 pass
             else:
                 break
@@ -932,7 +932,7 @@ def worker(
     def process_file_wrapper():
         while True:
             try:
-                file_to_process = file_queue.get(timeout=15)
+                file_to_process = file_queue.get(timeout=60)
             except Empty as e:
                 if file_queue.empty():
                     logger.info("File queue empty")
@@ -1072,7 +1072,7 @@ def batch_transcribe(
             min(batch_size, multiprocessing.cpu_count() - num_gpus),
             file_queue.qsize(),
         )
-    num_processes_per_worker = 5
+    num_processes_per_worker = 20
 
     mp_manager = Manager()
     gpu_waiting_dict = mp_manager.dict()
