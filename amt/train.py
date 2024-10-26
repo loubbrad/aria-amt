@@ -25,7 +25,7 @@ from amt.data import AmtDataset
 from amt.config import load_model_config
 from aria.utils import _load_weight
 
-GRADIENT_ACC_STEPS = 2
+GRADIENT_ACC_STEPS = 4
 
 # ----- USAGE -----
 #
@@ -143,7 +143,7 @@ def _get_optim(
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=lr,
-        weight_decay=0.1,
+        weight_decay=0.01,
         betas=(0.9, 0.95),
         eps=1e-6,
     )
@@ -177,7 +177,7 @@ def get_pretrain_optim(
 ):
     LR = 3e-4
     END_RATIO = 0.1
-    WARMUP_STEPS = 1000
+    WARMUP_STEPS = 100
 
     return _get_optim(
         lr=LR,
@@ -194,9 +194,9 @@ def get_finetune_optim(
     num_epochs: int,
     steps_per_epoch: int,
 ):
-    LR = 1e-4
+    LR = 2e-5
     END_RATIO = 0.1
-    WARMUP_STEPS = 1000
+    WARMUP_STEPS = 100
 
     return _get_optim(
         lr=LR,
@@ -253,7 +253,6 @@ def get_dataloaders(
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=batch_size,
-        num_workers=num_workers,
         shuffle=False,
     )
 
@@ -368,7 +367,16 @@ def _train(
                 loss = loss_fn(logits, tgt)
 
                 # Calculate statistics
-                loss_buffer.append(accelerator.gather(loss).mean(dim=0).item())
+                try:
+                    loss_buffer.append(
+                        accelerator.gather(loss).mean(dim=0).item()
+                    )
+                except Exception as e:
+                    logger.error(f"Seen error in step")
+                    logger.error(e)
+                    # If this fails, re add previous loss
+                    loss_buffer.append(loss_buffer[-1])
+
                 trailing_loss = sum(loss_buffer[-TRAILING_LOSS_STEPS:]) / len(
                     loss_buffer[-TRAILING_LOSS_STEPS:]
                 )
@@ -393,7 +401,14 @@ def _train(
                     f"grad_norm={round(grad_norm, 4)}"
                 )
                 if accelerator.is_main_process:
-                    loss_writer.writerow([_epoch, step, loss_buffer[-1]])
+                    loss_writer.writerow(
+                        [
+                            _epoch,
+                            step,
+                            loss_buffer[-1],
+                            grad_norm,
+                        ],
+                    )
 
                 pbar.set_postfix_str(
                     f"lr={lr_for_print}, "
@@ -449,7 +464,14 @@ def _train(
             loss = loss_fn(logits, tgt)
 
             # Logging
-            loss_buffer.append(accelerator.gather(loss).mean(dim=0).item())
+            try:
+                loss_buffer.append(accelerator.gather(loss).mean(dim=0).item())
+            except Exception as e:
+                logger.error(f"Seen error in step")
+                logger.error(e)
+                # If this fails, re add previous loss
+                loss_buffer.append(loss_buffer[-1])
+
             avg_val_loss = sum(loss_buffer) / len(loss_buffer)
             pbar.set_postfix_str(f"average_loss={round(avg_val_loss, 4)}")
 
@@ -481,7 +503,7 @@ def _train(
     if accelerator.is_main_process:
         loss_csv = open(os.path.join(project_dir, "loss.csv"), "w")
         loss_writer = csv.writer(loss_csv)
-        loss_writer.writerow(["epoch", "step", "loss"])
+        loss_writer.writerow(["epoch", "step", "loss", "grad_norm"])
         epoch_csv = open(os.path.join(project_dir, "epoch.csv"), "w")
         epoch_writer = csv.writer(epoch_csv)
         epoch_writer.writerow(

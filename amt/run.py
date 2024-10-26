@@ -435,14 +435,15 @@ def transcribe(
     model.load_state_dict(model_state)
 
     if trans_mode == "batch":
-        found_wav = glob.glob(
-            os.path.join(load_dir, "**/*.wav"), recursive=True
-        )
-        found_mp3 = glob.glob(
-            os.path.join(load_dir, "**/*.mp[34]"), recursive=True
-        )
-        print(f"Found {len(found_mp3)} mp3 and {len(found_wav)} wav files")
-        file_paths = found_mp3 + found_wav
+        pass
+        # found_wav = glob.glob(
+        #     os.path.join(load_dir, "**/*.wav"), recursive=True
+        # )
+        # found_mp3 = glob.glob(
+        #     os.path.join(load_dir, "**/*.mp[34]"), recursive=True
+        # )
+        # print(f"Found {len(found_mp3)} mp3 and {len(found_wav)} wav files")
+        # file_paths = found_mp3 + found_wav
     elif trans_mode == "maestro":
         matched_train_paths, matched_val_paths, matched_test_paths = (
             _get_matched_maestro_paths(load_dir)
@@ -466,7 +467,7 @@ def transcribe(
         segments_by_audio_file = {}
 
     files_to_process = []
-    for audio_path in file_paths:
+    for audio_path in segments_by_audio_file.keys():  # CHANGED DUE TO LS
         abs_audio_path = os.path.abspath(audio_path)
         if segments_by_audio_file.get(abs_audio_path, None) is not None:
             # "segments": [start_s, end_s, segment_avg_score]

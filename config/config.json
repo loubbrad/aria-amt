@@ -12,7 +12,7 @@
     "audio": {
         "sample_rate": 16000,
         "n_fft_large": 2048,
-        "n_fft_med": 2048,
+        "n_fft_med": 1024,
         "n_fft_small": 800,
         "hop_len": 160,
         "chunk_len": 30,
@@ -20,8 +20,25 @@
         "n_mels_med": 256,
         "n_mels_small": 128
     },
+    "aug": {
+        "min_noise_snr":  10,
+        "max_noise_snr":  45,
+        "max_dist_gain":  25,
+        "min_dist_gain":  0,
+        "noise_ratio":  0.9,
+        "reverb_ratio":  0.8,
+        "applause_ratio":  0.01,
+        "bandpass_ratio":  0.15,
+        "distort_ratio":  0.15,
+        "reduce_ratio":  0.01,
+        "detune_ratio":  0.1,
+        "detune_max_shift":  0.15,
+        "spec_aug_ratio":  0.0,
+        "max_spec_time_mask": 2500,
+        "max_spec_freq_mask": 0
+    },
     "data": {
-        "stride_factor": 15,
+        "stride_factor": 30,
         "max_seq_len": 4096
     }
 } 

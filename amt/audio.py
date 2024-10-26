@@ -12,11 +12,11 @@ from amt.config import load_config
 from amt.tokenizer import AmtTokenizer
 
 # hard-coded audio hyperparameters
-config = load_config()["audio"]
-SAMPLE_RATE = config["sample_rate"]
-N_FFT = config["n_fft_large"]
-HOP_LENGTH = config["hop_len"]
-CHUNK_LENGTH = config["chunk_len"]
+_config = load_config()["audio"]
+SAMPLE_RATE = _config["sample_rate"]
+N_FFT = _config["n_fft_large"]
+HOP_LENGTH = _config["hop_len"]
+CHUNK_LENGTH = _config["chunk_len"]
 N_SAMPLES = CHUNK_LENGTH * SAMPLE_RATE  # 480000 samples in a 30-second chunk
 N_FRAMES = N_SAMPLES // HOP_LENGTH  # 3000 frames in a mel spectrogram input
 N_SAMPLES_PER_TOKEN = HOP_LENGTH * 2  # the initial convolutions has stride 2
@@ -52,56 +52,41 @@ def pad_or_trim(array, length: int = N_SAMPLES, *, axis: int = -1):
     return array
 
 
-# Refactor default params are stored in config.json
 class AudioTransform(torch.nn.Module):
-    def __init__(
-        self,
-        reverb_factor: int = 1,
-        min_snr: int = 20,
-        max_snr: int = 50,
-        max_dist_gain: int = 25,
-        min_dist_gain: int = 0,
-        noise_ratio: float = 0.9,
-        reverb_ratio: float = 0.9,
-        applause_ratio: float = 0.01,
-        bandpass_ratio: float = 0.15,
-        distort_ratio: float = 0.15,
-        reduce_ratio: float = 0.01,
-        detune_ratio: float = 0.1,
-        detune_max_shift: float = 0.15,
-        spec_aug_ratio: float = 0.9,
-    ):
+    def __init__(self):
         super().__init__()
+
         self.tokenizer = AmtTokenizer()
-        self.reverb_factor = reverb_factor
-        self.min_snr = min_snr
-        self.max_snr = max_snr
-        self.max_dist_gain = max_dist_gain
-        self.min_dist_gain = min_dist_gain
+        self.config = load_config()
 
-        self.config = load_config()["audio"]
-        self.sample_rate = self.config["sample_rate"]
-        self.chunk_len = self.config["chunk_len"]
-        self.n_fft_large = self.config["n_fft_large"]
-        self.n_fft_med = self.config["n_fft_med"]
-        self.n_fft_small = self.config["n_fft_small"]
-        self.n_mels_large = self.config["n_mels_large"]
-        self.n_mels_med = self.config["n_mels_med"]
-        self.n_mels_small = self.config["n_mels_small"]
-        self.num_samples = self.sample_rate * self.chunk_len
+        self.sample_rate = self.config["audio"]["sample_rate"]
+        self.chunk_len = self.config["audio"]["chunk_len"]
+        self.hop_len = self.config["audio"]["hop_len"]
 
-        self.noise_ratio = noise_ratio
-        self.reverb_ratio = reverb_ratio
-        self.applause_ratio = applause_ratio
-        self.bandpass_ratio = bandpass_ratio
-        self.distort_ratio = distort_ratio
-        self.reduce_ratio = reduce_ratio
-        self.detune_ratio = detune_ratio
-        self.detune_max_shift = detune_max_shift
-        self.spec_aug_ratio = spec_aug_ratio
+        self.n_fft_large = self.config["audio"]["n_fft_large"]
+        self.n_fft_med = self.config["audio"]["n_fft_med"]
+        self.n_fft_small = self.config["audio"]["n_fft_small"]
+        self.n_mels_large = self.config["audio"]["n_mels_large"]
+        self.n_mels_med = self.config["audio"]["n_mels_med"]
+        self.n_mels_small = self.config["audio"]["n_mels_small"]
+        self.samples_per_chunk = self.sample_rate * self.chunk_len
 
-        self.time_mask_param = 2500
-        self.freq_mask_param = 0
+        self.min_noise_snr = self.config["aug"]["min_noise_snr"]
+        self.max_noise_snr = self.config["aug"]["max_noise_snr"]
+        self.min_dist_gain = self.config["aug"]["min_dist_gain"]
+        self.max_dist_gain = self.config["aug"]["max_dist_gain"]
+        self.noise_ratio = self.config["aug"]["noise_ratio"]
+        self.reverb_ratio = self.config["aug"]["reverb_ratio"]
+        self.applause_ratio = self.config["aug"]["applause_ratio"]
+        self.bandpass_ratio = self.config["aug"]["bandpass_ratio"]
+        self.distort_ratio = self.config["aug"]["distort_ratio"]
+        self.reduce_ratio = self.config["aug"]["reduce_ratio"]
+        self.detune_ratio = self.config["aug"]["detune_ratio"]
+        self.detune_max_shift = self.config["aug"]["detune_max_shift"]
+        self.spec_aug_ratio = self.config["aug"]["spec_aug_ratio"]
+
+        self.max_spec_time_mask = self.config["aug"]["max_spec_time_mask"]
+        self.max_spec_freq_mask = self.config["aug"]["max_spec_freq_mask"]
         self.reduction_resample_rate = 6000
 
         # Audio aug
@@ -134,51 +119,33 @@ class AudioTransform(torch.nn.Module):
         # 256 - 0-8000 2048-256
         # 512 - 30-8000 2048-384 30-8000 800-128
         # 764 - 30-8000 4096-384 30-8000 2048-256 30-4000 768-128
-        self.spec_transform_large = torchaudio.transforms.Spectrogram(
-            n_fft=self.n_fft_large,
-            hop_length=self.config["hop_len"],
-        )
-        self.mel_transform_large = torchaudio.transforms.MelScale(
-            n_mels=self.n_mels_large,
-            sample_rate=self.sample_rate,
-            n_stft=self.n_fft_large // 2 + 1,
-            f_min=30,
-            f_max=8000,
-        )
-        self.spec_transform_med = torchaudio.transforms.Spectrogram(
+        self.spec_transform = torchaudio.transforms.Spectrogram(
             n_fft=self.n_fft_med,
-            hop_length=self.config["hop_len"],
+            hop_length=self.hop_len,
         )
-        self.mel_transform_med = torchaudio.transforms.MelScale(
+        self.mel_transform = torchaudio.transforms.MelScale(
             n_mels=self.n_mels_med,
             sample_rate=self.sample_rate,
             n_stft=self.n_fft_med // 2 + 1,
             f_min=30,
             f_max=8000,
         )
-        self.spec_transform_small = torchaudio.transforms.Spectrogram(
-            n_fft=self.n_fft_small,
-            hop_length=self.config["hop_len"],
-        )
-        self.mel_transform_small = torchaudio.transforms.MelScale(
-            n_mels=self.n_mels_small,
-            sample_rate=self.sample_rate,
-            n_stft=self.n_fft_small // 2 + 1,
-            f_min=30,
-            f_max=4000,
-        )
         self.spec_aug = torch.nn.Sequential(
             torchaudio.transforms.TimeMasking(
-                time_mask_param=self.time_mask_param,
+                time_mask_param=self.max_spec_time_mask,
                 iid_masks=True,
             ),
             torchaudio.transforms.FrequencyMasking(
-                freq_mask_param=self.freq_mask_param, iid_masks=True
+                freq_mask_param=self.max_spec_freq_mask, iid_masks=True
             ),
         )
 
     def get_params(self):
         return {
+            "min_noise_snr": self.min_noise_snr,
+            "max_noise_snr": self.max_noise_snr,
+            "min_dist_gain": self.min_dist_gain,
+            "max_dist_gain": self.max_dist_gain,
             "noise_ratio": self.noise_ratio,
             "reverb_ratio": self.reverb_ratio,
             "applause_ratio": self.applause_ratio,
@@ -188,8 +155,6 @@ class AudioTransform(torch.nn.Module):
             "detune_ratio": self.detune_ratio,
             "detune_max_shift": self.detune_max_shift,
             "spec_aug_ratio": self.spec_aug_ratio,
-            "time_mask_param": self.time_mask_param,
-            "freq_mask_param": self.freq_mask_param,
         }
 
     def _get_paths(self, dir_path):
@@ -205,29 +170,50 @@ class AudioTransform(torch.nn.Module):
         impulses = [torchaudio.load(path) for path in impulse_paths]
         impulses = [
             AF.resample(
-                waveform=wav, orig_freq=sr, new_freq=config["sample_rate"]
+                waveform=wav, orig_freq=sr, new_freq=_config["sample_rate"]
             ).mean(0, keepdim=True)[:, : 5 * self.sample_rate]
             for wav, sr in impulses
         ]
+
+        # Check impulse is valid
+        for wav in impulses:
+            assert (
+                torch.allclose(wav, torch.zeros_like(wav), atol=1e-6) is False
+            )
+
         return [
             (wav) / (torch.linalg.vector_norm(wav, ord=2)) for wav in impulses
         ]
 
     def _get_noise(self, noise_paths: list):
-        noises = [torchaudio.load(path) for path in noise_paths]
-        noises = [
+        raw_noises = [torchaudio.load(path) for path in noise_paths]
+        raw_noises = [
             AF.resample(
-                waveform=wav, orig_freq=sr, new_freq=config["sample_rate"]
-            ).mean(0, keepdim=True)[:, : self.num_samples]
-            for wav, sr in noises
+                waveform=wav, orig_freq=sr, new_freq=self.sample_rate
+            ).mean(0, keepdim=True)
+            for wav, sr in raw_noises
         ]
 
-        for wav, path in zip(noises, noise_paths):
-            assert wav.shape[-1] == self.num_samples, "noise wav too short"
-            assert not (
-                torch.all(wav < 0.01).item() is True
-                and torch.all(wav > -0.01).item() is True
-            ), f"Loaded wav {path} is approximately silent which can cause NaN."
+        noises = []
+        for _idx, noise in enumerate(raw_noises):
+            max_samples = noise.shape[1]
+            assert (
+                max_samples >= self.samples_per_chunk
+            ), f"{max_samples} {self.samples_per_chunk} {_idx}"
+            for end_sample in range(
+                self.samples_per_chunk, max_samples, self.samples_per_chunk
+            ):
+                noises.append(
+                    noise[:, end_sample - self.samples_per_chunk : end_sample]
+                )
+
+        for wav in noises:
+            assert (
+                wav.shape[-1] == self.samples_per_chunk
+            ), "noise wav too short"
+            assert (
+                torch.allclose(wav, torch.zeros_like(wav), atol=1e-6) is False
+            )
 
         return noises
 
@@ -236,7 +222,7 @@ class AudioTransform(torch.nn.Module):
         batch_size, _ = wav.shape
 
         reverb_strength = (
-            torch.Tensor([random.uniform(0, 1) for _ in range(batch_size)])
+            torch.Tensor([random.uniform(0, 0.8) for _ in range(batch_size)])
             .unsqueeze(-1)
             .to(wav.device)
         )
@@ -244,13 +230,8 @@ class AudioTransform(torch.nn.Module):
         impulse = getattr(self, f"impulse_{reverb_type}")
 
         reverb = AF.fftconvolve(wav, impulse, mode="full")[
-            :, : self.num_samples
+            :, : self.samples_per_chunk
         ]
-        if self.reverb_factor > 1:
-            for _ in range(self.reverb_factor - 1):
-                reverb = AF.fftconvolve(reverb, impulse, mode="full")[
-                    : self.num_samples
-                ]
 
         res = (reverb_strength * reverb) + ((1 - reverb_strength) * wav)
 
@@ -261,7 +242,7 @@ class AudioTransform(torch.nn.Module):
 
         snr_dbs = torch.tensor(
             [
-                random.randint(self.min_snr, self.max_snr)
+                random.randint(self.min_noise_snr, self.max_noise_snr)
                 for _ in range(batch_size)
             ]
         ).to(wav.device)
@@ -274,7 +255,7 @@ class AudioTransform(torch.nn.Module):
         batch_size, _ = wav.shape
 
         snr_dbs = torch.tensor(
-            [random.randint(1, self.min_snr) for _ in range(batch_size)]
+            [random.randint(1, self.min_noise_snr) for _ in range(batch_size)]
         ).to(wav.device)
         applause_type = random.randint(5, self.num_applause - 1)
 
@@ -390,44 +371,23 @@ class AudioTransform(torch.nn.Module):
     def log_mel(
         self, wav: torch.Tensor, shift: int | None = None, detune: bool = False
     ):
-        spec_large = self.spec_transform_large(wav)[..., :-1]
-        spec_med = self.spec_transform_med(wav)[..., :-1]
-        spec_small = self.spec_transform_small(wav)[..., :-1]
+        spec = self.spec_transform(wav)[..., :-1]
 
         if shift is not None and shift != 0:
-            spec_large = self.shift_spec(spec_large, shift)
-            spec_med = self.shift_spec(spec_med, shift)
-            spec_small = self.shift_spec(spec_small, shift)
+            spec = self.shift_spec(spec, shift)
         elif detune is True:
             # Don't detune and spec shift at the same time
             if random.random() < self.detune_ratio:
                 detune_shift = random.uniform(
                     -self.detune_max_shift, self.detune_max_shift
                 )
-                spec_large = self.detune_spec(
-                    spec_large,
-                    detune_shift=detune_shift,
-                )
-                spec_med = self.detune_spec(
-                    spec_med,
-                    detune_shift=detune_shift,
-                )
-                spec_small = self.detune_spec(
-                    spec_small,
+                spec = self.detune_spec(
+                    spec,
                     detune_shift=detune_shift,
                 )
 
-        mel_spec_large = self.mel_transform_large(spec_large)
-        mel_spec_med = self.mel_transform_med(spec_med)
-        mel_spec_small = self.mel_transform_small(spec_small)
-
-        # Norm
-        concat_mel = torch.cat(
-            # (mel_spec_large, mel_spec_med, mel_spec_small),
-            (mel_spec_large, mel_spec_small),
-            dim=1,
-        )
-        log_mel = self.norm_mel(concat_mel)
+        mel_spec = self.mel_transform(spec)
+        log_mel = self.norm_mel(mel_spec)
 
         return log_mel
 
