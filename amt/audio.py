@@ -14,7 +14,7 @@ from amt.tokenizer import AmtTokenizer
 # hard-coded audio hyperparameters
 _config = load_config()["audio"]
 SAMPLE_RATE = _config["sample_rate"]
-N_FFT = _config["n_fft_large"]
+N_FFT = _config["n_fft"]
 HOP_LENGTH = _config["hop_len"]
 CHUNK_LENGTH = _config["chunk_len"]
 N_SAMPLES = CHUNK_LENGTH * SAMPLE_RATE  # 480000 samples in a 30-second chunk
@@ -63,12 +63,8 @@ class AudioTransform(torch.nn.Module):
         self.chunk_len = self.config["audio"]["chunk_len"]
         self.hop_len = self.config["audio"]["hop_len"]
 
-        self.n_fft_large = self.config["audio"]["n_fft_large"]
-        self.n_fft_med = self.config["audio"]["n_fft_med"]
-        self.n_fft_small = self.config["audio"]["n_fft_small"]
-        self.n_mels_large = self.config["audio"]["n_mels_large"]
-        self.n_mels_med = self.config["audio"]["n_mels_med"]
-        self.n_mels_small = self.config["audio"]["n_mels_small"]
+        self.n_fft = self.config["audio"]["n_fft"]
+        self.n_mels = self.config["audio"]["n_mels"]
         self.samples_per_chunk = self.sample_rate * self.chunk_len
 
         self.min_noise_snr = self.config["aug"]["min_noise_snr"]
@@ -116,17 +112,14 @@ class AudioTransform(torch.nn.Module):
             self.register_buffer(f"applause_{i}", applause)
             self.num_applause += 1
 
-        # 256 - 0-8000 2048-256
-        # 512 - 30-8000 2048-384 30-8000 800-128
-        # 764 - 30-8000 4096-384 30-8000 2048-256 30-4000 768-128
         self.spec_transform = torchaudio.transforms.Spectrogram(
-            n_fft=self.n_fft_med,
+            n_fft=self.n_fft,
             hop_length=self.hop_len,
         )
         self.mel_transform = torchaudio.transforms.MelScale(
-            n_mels=self.n_mels_med,
+            n_mels=self.n_mels,
             sample_rate=self.sample_rate,
-            n_stft=self.n_fft_med // 2 + 1,
+            n_stft=self.n_fft // 2 + 1,
             f_min=30,
             f_max=8000,
         )
