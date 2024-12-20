@@ -120,7 +120,7 @@ def build_synth(
         print(f"Dataset file already exists at {save_path} - removing")
         os.remove(save_path)
 
-    mid_paths = list(Path("directory").glob("**/*.mid")) + list(
+    mid_paths = list(Path(mid_dir).glob("**/*.mid")) + list(
         Path(mid_dir).glob("**/*.midi")
     )
 
