@@ -41,9 +41,6 @@ STRIDE_FACTOR = 3
 CHUNK_LEN_MS = LEN_MS // STRIDE_FACTOR
 
 
-# TODO: Implement continuous batching in a torch.compile friendly way
-
-
 def _setup_logger(name: str | None = None):
     logger_name = f"[{name}] " if name else ""
     logger = logging.getLogger(__name__)
@@ -232,7 +229,9 @@ def process_segments(
     prefixes = [
         tokenizer.trunc_seq(prefix, MAX_BLOCK_LEN) for prefix in raw_prefixes
     ]
-    seq = torch.stack([tokenizer.encode(prefix) for prefix in prefixes]).cuda()
+    seq = torch.stack(
+        [torch.tensor(tokenizer.encode(prefix)) for prefix in prefixes]
+    ).cuda()
     eos_idxs = torch.tensor(
         [MAX_BLOCK_LEN for _ in prefixes], dtype=torch.int
     ).cuda()
@@ -297,7 +296,7 @@ def process_segments(
         logger.warning("Context length overflow when transcribing segment(s)")
 
     results = [
-        tokenizer.decode(seq[_idx, : eos_idxs[_idx] + 1])
+        tokenizer.decode(seq[_idx, : eos_idxs[_idx] + 1].tolist())
         for _idx in range(seq.shape[0])
     ]
 
@@ -309,7 +308,7 @@ def gpu_manager(
     gpu_batch_queue: Queue,
     gpu_waiting_dict: dict,
     gpu_waiting_dict_lock: LockType,
-    result_queue: Queue,
+    results_dict: dict,
     model: AmtEncoderDecoder,
     batch_size: int,
     compile_mode: str | bool = False,
@@ -342,7 +341,7 @@ def gpu_manager(
         )
 
     audio_transform = AudioTransform().cuda()
-    tokenizer = AmtTokenizer(return_tensors=True)
+    tokenizer = AmtTokenizer()
 
     try:
         while True:
@@ -374,7 +373,7 @@ def gpu_manager(
                     # pid = -1 when its a pad sequence
                     for result, (_, pid) in zip(results, batch):
                         if pid != -1:
-                            result_queue.put((result, pid))
+                            results_dict[pid] = result
 
     except Exception as e:
         logger.error(f"GPU manager failed with exception: {e}")
@@ -411,10 +410,10 @@ def _find_min_diff_batch(tasks: List, batch_size: int):
 
 # NOTE:
 # - For some reason copying gpu_waiting_dict is not working properly and is
-#   leading to race conditions. I've implemented a lock to stop it.
-# - The size of gpu_batch_queue decreases before the code for deleting the
-#   corresponding entry in gpu_waiting_dict gets processed. Adding a short
-#   sleep is a workaround
+#   leading to race conditions. I've implemented a lock to stop it: The size of
+#   gpu_batch_queue decreases before the code for deleting the corresponding
+#   entry in gpu_waiting_dict gets processed. Adding a short sleep is a
+#   workaround.
 def gpu_batch_manager(
     gpu_task_queue: Queue,
     gpu_batch_queue: Queue,
@@ -434,7 +433,7 @@ def gpu_batch_manager(
         while True:
             try:
                 while not gpu_task_queue.empty():
-                    task, pid = gpu_task_queue.get_nowait()
+                    task, pid = gpu_task_queue.get(timeout=0.05)
                     tasks.append((task, pid))
             except Empty:
                 pass
@@ -529,18 +528,18 @@ def _truncate_seq(
 ):
     # Truncates and shifts a sequence by retokenizing the underlying midi_dict
     if start_ms == end_ms:
-        _mid_dict, unclosed_notes = tokenizer._detokenize_midi_dict(
+        _mid_dict, unclosed_notes = tokenizer.detokenize(
             seq, start_ms, return_unclosed_notes=True
         )
         random.shuffle(unclosed_notes)
         return [("prev", p) for p in unclosed_notes] + [tokenizer.bos_tok]
     else:
-        _mid_dict = tokenizer._detokenize_midi_dict(seq, LEN_MS)
+        _mid_dict = tokenizer.detokenize(seq, LEN_MS)
         if len(_mid_dict.note_msgs) == 0:
             return [tokenizer.bos_tok]
         else:
             # The end_ms - 1 is a workaround to get rid of the off msgs
-            res = tokenizer._tokenize_midi_dict(_mid_dict, start_ms, end_ms - 1)
+            res = tokenizer.tokenize(_mid_dict, start_ms, end_ms - 1)
 
         if res[-1] == tokenizer.eos_tok:
             res.pop()
@@ -667,7 +666,7 @@ def _get_silent_intervals(wav: torch.Tensor):
     # Filter intervals by minimum length
     valid = lengths > MIN_WINDOW_STEPS
     silent_intervals = [
-        (start * MS_PER_HOP, (end - 1) * MS_PER_HOP)
+        (int(start * MS_PER_HOP), int((end - 1) * MS_PER_HOP))
         for start, end, vl in zip(starts, ends, valid)
         if vl
     ]
@@ -678,7 +677,7 @@ def _get_silent_intervals(wav: torch.Tensor):
 def transcribe_file(
     file_path,
     gpu_task_queue: Queue,
-    result_queue: Queue,
+    results_dict: dict,
     pid: int,
     tokenizer: AmtTokenizer = AmtTokenizer(),
     segment: Tuple[int, int] | None = None,
@@ -703,15 +702,12 @@ def transcribe_file(
         gpu_task_queue.put(((curr_audio_segment, seq), pid))
         while True:
             try:
-                gpu_result = result_queue.get(timeout=0.01)
+                seq = results_dict.pop(pid)
             except Exception as e:
+                time.sleep(0.1)
                 pass
             else:
-                if gpu_result[1] == pid:
-                    seq = gpu_result[0]
-                    break
-                else:
-                    result_queue.put(gpu_result)
+                break
 
         if len(silent_intervals) > 0:
             logger.debug(
@@ -804,7 +800,7 @@ def process_file(
     file_path: str,
     file_queue: Queue,
     gpu_task_queue: Queue,
-    result_queue: Queue,
+    results_dict: dict,
     tokenizer: AmtTokenizer,
     save_dir: str,
     input_dir: str,
@@ -821,7 +817,7 @@ def process_file(
                 break
 
         try:
-            mid_dict = tokenizer._detokenize_midi_dict(
+            mid_dict = tokenizer.detokenize(
                 tokenized_seq=_seq,
                 len_ms=last_onset,
             )
@@ -865,9 +861,9 @@ def process_file(
 
         try:
             seq = transcribe_file(
-                file_path,
-                gpu_task_queue,
-                result_queue,
+                file_path=file_path,
+                gpu_task_queue=gpu_task_queue,
+                results_dict=results_dict,
                 pid=pid,
                 segment=segment,
             )
@@ -876,9 +872,8 @@ def process_file(
                 f"Failed to process {file_path} segment {idx}: {traceback.format_exc()}"
             )
             task_rmv_cnt = remove_failures_from_queue_(gpu_task_queue, pid)
-            res_rmv_cnt = remove_failures_from_queue_(result_queue, pid)
+            results_dict.pop(pid)
             logger.info(f"Removed {task_rmv_cnt} from task queue")
-            logger.info(f"Removed {res_rmv_cnt} from result queue")
             continue
 
         logger.info(
@@ -921,7 +916,7 @@ def watchdog(main_pids: List, child_pids: List):
 def worker(
     file_queue: Queue,
     gpu_task_queue: Queue,
-    result_queue: Queue,
+    results_dict: dict,
     save_dir: str,
     input_dir: str | None = None,
     tasks_per_worker: int = 5,
@@ -938,7 +933,6 @@ def worker(
                     logger.info("File queue empty")
                     break
                 else:
-                    # I'm pretty sure empty is thrown due to timeout too
                     logger.info("Processes timed out waiting for file queue")
                     continue
 
@@ -946,7 +940,7 @@ def worker(
                 file_path=file_to_process["path"],
                 file_queue=file_queue,
                 gpu_task_queue=gpu_task_queue,
-                result_queue=result_queue,
+                results_dict=results_dict,
                 tokenizer=tokenizer,
                 save_dir=save_dir,
                 input_dir=input_dir,
@@ -955,7 +949,8 @@ def worker(
             )
 
             if file_queue.empty():
-                return
+                logger.info("File queue empty after processing")
+                break
 
     try:
         with ThreadPoolExecutor(max_workers=tasks_per_worker) as executor:
@@ -1029,6 +1024,9 @@ def batch_transcribe(
 
     # If only processing one file, add even if save file exists
     if len(files_to_process) == 1:
+        # TODO: This workaround should be reimplemented properly
+        while not file_queue.empty():
+            file_queue.get()
         file_queue.put(files_to_process[0])
 
     logger.info(
@@ -1045,7 +1043,8 @@ def batch_transcribe(
             file_queue.qsize(),
         )
     num_processes_per_worker = min(
-        5 * (batch_size // num_workers), file_queue.qsize() // num_workers
+        round((4 * batch_size) / num_workers),
+        round(file_queue.qsize() / num_workers),
     )
 
     mp_manager = Manager()
@@ -1053,7 +1052,7 @@ def batch_transcribe(
     gpu_waiting_dict_lock = mp_manager.Lock()
     gpu_batch_queue = Queue()
     gpu_task_queue = Queue()
-    result_queue = Queue()
+    results_dict = mp_manager.dict()
 
     child_pids = []
     logger.info(
@@ -1065,7 +1064,7 @@ def batch_transcribe(
             args=(
                 file_queue,
                 gpu_task_queue,
-                result_queue,
+                results_dict,
                 save_dir,
                 input_dir,
                 num_processes_per_worker,
@@ -1100,7 +1099,7 @@ def batch_transcribe(
                     gpu_batch_queue,
                     gpu_waiting_dict,
                     gpu_waiting_dict_lock,
-                    result_queue,
+                    results_dict,
                     model,
                     batch_size,
                     compile_mode,
@@ -1132,7 +1131,7 @@ def batch_transcribe(
                 gpu_batch_queue,
                 gpu_waiting_dict,
                 gpu_waiting_dict_lock,
-                result_queue,
+                results_dict,
                 model,
                 batch_size,
                 compile_mode,
@@ -1174,14 +1173,21 @@ def batch_transcribe(
         watchdog_process.join()
         gpu_batch_manager_process.terminate()
         gpu_batch_manager_process.join()
+
         file_queue.close()
         file_queue.join_thread()
         gpu_task_queue.close()
         gpu_task_queue.join_thread()
         gpu_batch_queue.close()
         gpu_batch_queue.join_thread()
-        result_queue.close()
-        result_queue.join_thread()
+
+        for p in worker_processes:
+            if p.is_alive():
+                p.terminate()
+                p.join()
+
+        mp_manager.shutdown()
+        multiprocessing.resource_tracker.unregister_after_fork = True
 
     time_taken_s = int(time.time() - start_time)
     logger.info(
