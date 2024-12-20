@@ -123,6 +123,7 @@ def build_synth(
     mid_paths = list(Path(mid_dir).glob("**/*.mid")) + list(
         Path(mid_dir).glob("**/*.midi")
     )
+    mid_paths = [str(p) for p in mid_paths]
 
     print(f"Found {len(mid_paths)} train paths")
 
