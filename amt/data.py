@@ -485,10 +485,16 @@ class AmtDataset(torch.utils.data.Dataset):
                 for _ in range(num_processes)
             ]
 
-        for p in worker_processes:
-            p.start()
-        for p in worker_processes:
-            p.join()
+        try:
+            for p in worker_processes:
+                p.start()
+            for p in worker_processes:
+                p.join()
+
+        except KeyboardInterrupt:
+            for p in worker_processes:
+                p.terminate()
+            exit(1)
 
         sharded_save_paths = []
         while not save_path_queue.empty():
