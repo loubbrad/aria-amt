@@ -46,9 +46,7 @@ def _add_matched_args(subparser):
 
 def _add_synth_args(subparser):
     subparser.add_argument("dir", help="Directory containing MIDIs")
-    subparser.add_argument("csv", help="Split csv")
-    subparser.add_argument("-train", help="train save path", required=True)
-    subparser.add_argument("-test", help="test save path", required=True)
+    subparser.add_argument("-save_path", help="train save path", required=True)
     subparser.add_argument(
         "-mp",
         help="number of processes to use",
@@ -110,64 +108,28 @@ def _add_transcribe_args(subparser):
     subparser.add_argument("-bs", help="batch size", type=int, default=16)
 
 
-def get_synth_mid_paths(mid_dir: str, csv_path: str):
-    assert os.path.isdir(mid_dir), "directory doesn't exist"
-    assert os.path.isfile(csv_path), "csv not found"
-
-    train_paths = []
-    test_paths = []
-    with open(csv_path, "r") as f:
-        dict_reader = DictReader(f)
-        for entry in dict_reader:
-            mid_path = os.path.normpath(
-                os.path.join(mid_dir, entry["mid_path"])
-            )
-
-            assert os.path.isfile(mid_path), "file missing"
-            if entry["split"] == "train":
-                train_paths.append(mid_path)
-            elif entry["split"] == "test":
-                test_paths.append(mid_path)
-            else:
-                raise ValueError("Invalid split")
-
-    return train_paths, test_paths
-
-
 def build_synth(
     mid_dir: str,
-    csv_path: str,
-    train_path: str,
-    test_path: str,
+    save_path: str,
     num_procs: int,
 ):
     from amt.data import AmtDataset, pianoteq_cmd_fn
+    from pathlib import Path
 
-    if os.path.isfile(train_path):
-        print(f"Dataset file already exists at {train_path} - removing")
-        os.remove(train_path)
-    if os.path.isfile(test_path):
-        print(f"Dataset file already exists at {test_path} - removing")
-        os.remove(test_path)
+    if os.path.isfile(save_path):
+        print(f"Dataset file already exists at {save_path} - removing")
+        os.remove(save_path)
 
-    (
-        train_paths,
-        test_paths,
-    ) = get_synth_mid_paths(mid_dir, csv_path)
-
-    print(f"Found {len(train_paths)} train and {len(test_paths)} test paths")
-
-    print(f"Building {train_path}")
-    AmtDataset.build(
-        load_paths=train_paths,
-        save_path=train_path,
-        num_processes=num_procs,
-        cli_cmd_fn=pianoteq_cmd_fn,
+    mid_paths = list(Path("directory").glob("**/*.mid")) + list(
+        Path(mid_dir).glob("**/*.midi")
     )
-    print(f"Building {test_path}")
+
+    print(f"Found {len(mid_paths)} train paths")
+
+    print(f"Building {save_path}")
     AmtDataset.build(
-        load_paths=test_paths,
-        save_path=test_path,
+        load_paths=mid_paths,
+        save_path=save_path,
         num_processes=num_procs,
         cli_cmd_fn=pianoteq_cmd_fn,
     )
@@ -435,15 +397,14 @@ def transcribe(
     model.load_state_dict(model_state)
 
     if trans_mode == "batch":
-        pass
-        # found_wav = glob.glob(
-        #     os.path.join(load_dir, "**/*.wav"), recursive=True
-        # )
-        # found_mp3 = glob.glob(
-        #     os.path.join(load_dir, "**/*.mp[34]"), recursive=True
-        # )
-        # print(f"Found {len(found_mp3)} mp3 and {len(found_wav)} wav files")
-        # file_paths = found_mp3 + found_wav
+        found_wav = glob.glob(
+            os.path.join(load_dir, "**/*.wav"), recursive=True
+        )
+        found_mp3 = glob.glob(
+            os.path.join(load_dir, "**/*.mp[34]"), recursive=True
+        )
+        print(f"Found {len(found_mp3)} mp3 and {len(found_wav)} wav files")
+        file_paths = found_mp3 + found_wav
     elif trans_mode == "maestro":
         matched_train_paths, matched_val_paths, matched_test_paths = (
             _get_matched_maestro_paths(load_dir)
@@ -564,9 +525,7 @@ def main():
     elif args.command == "build-synth":
         build_synth(
             mid_dir=args.dir,
-            csv_path=args.csv,
-            train_path=args.train,
-            test_path=args.test,
+            save_path=args.save_path,
             num_procs=args.mp,
         )
     elif args.command == "transcribe":
